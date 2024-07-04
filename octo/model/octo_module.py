@@ -140,6 +140,7 @@ class OctoTransformer(nn.Module):
 
         # Observations attend to all tasks and all other observations tokens causally,
         # e.g. at same timestep or before, but do not attend to readouts
+        # "other.timestep <= self.timestep"
 
         observation_attention_rules = {
             "task_*": AttentionRule.CAUSAL,

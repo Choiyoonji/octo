@@ -4,7 +4,7 @@ and new action space (bimanual) using a simulated ALOHA cube handover dataset (h
 
 To run this example, first download and extract the dataset from here: https://rail.eecs.berkeley.edu/datasets/example_sim_data.zip
 
-python examples/02_finetune_new_observation_action.py --pretrained_path=hf://rail-berkeley/octo-small-1.5 --data_dir=...
+python examples/02_finetune_new_observation_action.py --pretrained_path=hf://rail-berkeley/octo-small-1.5 --data_dir=examples/aloha_sim_dataset
 """
 from absl import app, flags, logging
 import flax
@@ -32,7 +32,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "pretrained_path", None, "Path to pre-trained Octo checkpoint directory."
 )
-flags.DEFINE_string("data_dir", None, "Path to finetuning dataset, in RLDS format.")
+flags.DEFINE_string("data_dir", None, "Path to finetuning dataset, in RLDS format.")    
 flags.DEFINE_string("save_dir", None, "Directory for saving finetuning checkpoints.")
 flags.DEFINE_integer("batch_size", 128, "Batch size for finetuning.")
 
