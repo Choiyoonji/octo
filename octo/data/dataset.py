@@ -321,6 +321,46 @@ def make_dataset_from_rlds(
             - language_instruction      # language instruction, present if `language_key` is provided
         - action                        # action vector
         - dataset_name                  # name of the dataset
+
+    Args:
+        name (str): RLDS 데이터셋의 이름 (일반적으로 "name" 또는 "name:version").
+        data_dir (str): 데이터 디렉토리의 경로.
+        train (bool): 학습(split) 데이터를 사용할지 여부. True면 학습 데이터를, False면 검증 데이터를 사용.
+        shuffle (bool, optional): 파일 읽기 순서를 섞을지 여부 (전체 데이터셋을 완전히 섞지는 않음, 왜냐하면 하나의 파일에 여러 궤적이 포함되기 때문).
+        standardize_fn (Callable[[dict], dict], optional): 제공되는 경우, 각 궤적에 대해 처음 적용되는 함수.
+        image_obs_keys (Mapping[str, str|None]): "observation" 딕셔너리에서 추출할 RGB 이미지의 {새로운 이름: 기존 이름} 매핑. 
+            예: `new_obs = {f"image_{new}": old_obs[old] for new, old in image_obs_keys.items()}`. 
+            값이 None인 경우 패딩 이미지 삽입.
+        depth_obs_keys (Mapping[str, str|None]): `image_obs_keys`와 동일하지만 깊이(depth) 이미지에 해당. 키는 "depth_"로 시작.
+        proprio_obs_key (str, optional): 제공되는 경우, "observation" 딕셔너리에 "proprio" 키가 포함되며, 
+            `traj["observation"][proprio_obs_key]`에서 추출.
+        language_key (str, optional): 제공되는 경우, "task" 딕셔너리에 "language_instruction" 키가 포함되며, 
+            `traj[language_key]`에서 추출. 여러 키와 일치하는 경우 하나를 무작위로 선택.
+        action_proprio_normalization_type (str, optional): action, proprio 또는 둘 다에 대해 정규화 유형을 지정.
+            "normal" (평균 0, 표준편차 1) 또는 "bounds" ([-1, 1]로 정규화).
+        dataset_statistics (dict|str, optional): 정규화를 위한 데이터셋 통계를 포함하는 dict (또는 JSON 파일 경로). 
+            "num_transitions"와 "num_trajectories" 키를 제공하여 후속 사용을 지원. 제공되지 않는 경우 실시간으로 계산.
+        force_recompute_dataset_statistics (bool, optional): True이고 `dataset_statistics`가 None인 경우, 
+            캐시된 통계가 있더라도 데이터셋 통계를 다시 계산.
+        action_normalization_mask (Sequence[bool], optional): 제공되는 경우, 해당 마스크가 True인 액션 차원만 정규화. 
+            예: 그리퍼 액션 차원이 항상 0 또는 1인 경우 정규화하지 않음. 기본적으로 모든 액션 차원을 정규화.
+        filter_functions (Sequence[ModuleSpec]): 원시 데이터셋에 적용되는 필터링 함수들의 ModuleSpec 시퀀스.
+        skip_norm (bool): True인 경우, action과 proprio의 정규화를 건너뜀. 기본값: False.
+        ignore_errors (bool): True인 경우, dataset.ignore_errors()를 통해 오류가 있는 데이터셋 요소를 건너뜀. 기본값: False.
+        num_parallel_reads (int): 병렬 읽기 작업자 수. 기본값: AUTOTUNE.
+        num_parallel_calls (int): traj_map 작업을 위한 병렬 호출 수. 기본값: AUTOTUNE.
+
+    Returns:
+        Generator: 각 스텝에 다음 필드를 포함하는 궤적 데이터셋을 생성하는 제너레이터:
+            - observation:
+                - image_{name1, name2, ...} # RGB 이미지 관찰
+                - depth_{name1, name2, ...} # 깊이 이미지 관찰
+                - proprio                   # 1차원 고유 감각 관찰 배열
+                - timestep                  # 각 프레임의 시간 단계
+            - task:
+                - language_instruction      # 언어 지시사항, `language_key`가 제공된 경우
+            - action                        # 액션 벡터
+            - dataset_name                  # 데이터셋 이름
     """
     REQUIRED_KEYS = {"observation", "action"}
 
