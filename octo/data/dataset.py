@@ -322,7 +322,7 @@ def make_dataset_from_rlds(
         - action                        # action vector
         - dataset_name                  # name of the dataset
     """
-    REQUIRED_KEYS = {"observation", "action"}
+    REQUIRED_KEYS = {"observation", "action", "reward"}
 
     def restructure(traj):
         # apply a standardization function, if provided
@@ -336,7 +336,7 @@ def make_dataset_from_rlds(
             )
 
         # extracts images, depth images and proprio from the "observation" dict
-        traj_len = tf.shape(traj["action"])[0]
+        traj_len = tf.shape(traj["reward"])[0]
         old_obs = traj["observation"]
         new_obs = {}
         for new, old in image_obs_keys.items():

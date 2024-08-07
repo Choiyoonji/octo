@@ -24,7 +24,7 @@ import jax
 import numpy as np
 import wandb
 
-sys.path.append("path/to/your/act")
+sys.path.append("/home/choiyj/act")
 
 # keep this to register ALOHA sim env
 from envs.aloha_sim_env import AlohaGymEnv  # noqa
@@ -36,7 +36,7 @@ from octo.utils.train_callbacks import supply_rng
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
-    "finetuned_path", None, "Path to finetuned Octo checkpoint directory."
+    "finetuned_path", "/home/choiyj/octo/examples/", "Path to finetuned Octo checkpoint directory."
 )
 
 

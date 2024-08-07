@@ -1,20 +1,20 @@
-"""
-This script demonstrates how to finetune Octo to a new observation space (single camera + proprio)
-and new action space (bimanual) using a simulated ALOHA cube handover dataset (https://tonyzhaozh.github.io/aloha/).
+import datetime
+from functools import partial
+import os
 
-To run this example, first download and extract the dataset from here: https://rail.eecs.berkeley.edu/datasets/example_sim_data.zip
-
-python examples/02_finetune_new_observation_action.py --pretrained_path=hf://rail-berkeley/octo-small-1.5 --data_dir=examples/aloha_sim_dataset
-"""
 from absl import app, flags, logging
 import flax
+from flax.traverse_util import flatten_dict
 import jax
+from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from ml_collections import config_flags, ConfigDict
 import optax
 import tensorflow as tf
 import tqdm
 import wandb
 
 from octo.data.dataset import make_single_dataset
+from octo.data.oxe import make_oxe_dataset_kwargs
 from octo.model.components.action_heads import L1ActionHead
 from octo.model.components.tokenizers import LowdimObsTokenizer
 from octo.model.octo_model import OctoModel
@@ -32,9 +32,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "pretrained_path", 'hf://rail-berkeley/octo-small-1.5', "Path to pre-trained Octo checkpoint directory."
 )
-flags.DEFINE_string("data_dir", '/home/choiyj/octo/examples/aloha_sim_dataset', "Path to finetuning dataset, in RLDS format.")    
-flags.DEFINE_string("save_dir", '/home/choiyj/octo/examples', "Directory for saving finetuning checkpoints.")
-flags.DEFINE_integer("batch_size", 126, "Batch size for finetuning.")
+flags.DEFINE_string("data_dir", '/home/choiyj/octo/octo_ur/', "Path to finetuning dataset, in RLDS format.")    
+flags.DEFINE_string("save_dir", '/home/choiyj/octo/octo_ur/', "Directory for saving finetuning checkpoints.")
+flags.DEFINE_integer("batch_size", 64*3, "Batch size for finetuning.")
 
 flags.DEFINE_bool(
     "freeze_transformer",
@@ -44,16 +44,31 @@ flags.DEFINE_bool(
 
 
 def main(_):
-    assert (
-        FLAGS.batch_size % jax.device_count() == 0
-    ), "Batch size must be divisible by device count."
-
     initialize_compilation_cache()
+    devices = jax.devices()
+
+    #########
+    #
+    # Setup Jax Data Parallelism
+    #
+    #########
+
+    assert (
+        FLAGS.batch_size % len(devices) == 0
+    ), f"Batch size ({FLAGS.batch_size}) must be divisible by the number of devices ({len(devices)})"
+
+    # create a 1D mesh with a single axis named "batch"
+    mesh = Mesh(jax.devices(), axis_names="batch")
+    # Our batches will be data-parallel sharded -- each device will get a slice of the batch
+    dp_sharding = NamedSharding(mesh, PartitionSpec("batch"))
+    # Our model will be replicated across devices (we are only doing data parallelism, not model parallelism)
+    replicated_sharding = NamedSharding(mesh, PartitionSpec())
+
     # prevent tensorflow from using GPU memory since it's only used for data loading
     tf.config.set_visible_devices([], "GPU")
 
     # setup wandb for logging
-    wandb.init(name="finetune_aloha", project="octo")
+    wandb.init(name="finetune_ur5", project="octo")
 
     # load pre-trained model
     logging.info("Loading pre-trained model...")
@@ -64,14 +79,17 @@ def main(_):
     # delete goal images in the data loader since we will train a language-conditioned-only policy
     # TODO: directly load this from raw data to make it less opaque?
     logging.info("Loading finetuning dataset...")
+
+    dataset_kwargs = make_oxe_dataset_kwargs(
+        # see octo/data/oxe/oxe_dataset_configs.py for available datasets
+        # (this is a very small one for faster loading)
+        "berkeley_autolab_ur5",
+        # can be local or on cloud storage (anything supported by TFDS)
+        # "/path/to/base/oxe/directory",
+        "/home/choiyj/octo/octo_ur/",
+    )
     dataset = make_single_dataset(
-        dataset_kwargs=dict(
-            name="aloha_sim_cube_scripted_dataset",
-            data_dir=FLAGS.data_dir,
-            image_obs_keys={"primary": "top"},
-            proprio_obs_key="state",
-            language_key="language_instruction",
-        ),
+        dataset_kwargs=dataset_kwargs,
         traj_transform_kwargs=dict(
             window_size=1,
             action_horizon=50,
@@ -84,7 +102,7 @@ def main(_):
     train_data_iter = (
         dataset.repeat()
         .unbatch()
-        .shuffle(10000)  # can reduce this if RAM consumption too high
+        .shuffle(100000)  # can reduce this if RAM consumption too high
         .batch(FLAGS.batch_size)
         .iterator()
     )
@@ -105,24 +123,28 @@ def main(_):
     config = pretrained_model.config
     del config["model"]["observation_tokenizers"]["wrist"]
     ###
+
+    # ModuleSpec.create() returns a dictionary
+    # {Module : name, 'args': args, 'kargs': kargs}
     config["model"]["observation_tokenizers"]["proprio"] = ModuleSpec.create(
         LowdimObsTokenizer,
         n_bins=256,
         bin_type="normal",
-        low=-2.0,
-        high=2.0,
+        low=-1/15,
+        high=1/15,
         obs_keys=["proprio"],
     )
     # Fully override the old action head with a new one (for smaller changes, you can use update_config)
     config["model"]["heads"]["action"] = ModuleSpec.create(
         L1ActionHead,
         action_horizon=50,
-        action_dim=14,
+        action_dim=7,
         readout_key="readout_action",
     )
 
     # initialize weights for modified Octo model, then merge in all applicable pre-trained weights
     # new position encodings for proprio inputs & weights for new action head will remain "from scratch"
+    # model -> finetuning data에 맞는 config / pretrained_model -> base 모델의 config
     logging.info("Updating model for new observation & action space...")
     model = OctoModel.from_config(
         config,
@@ -171,7 +193,12 @@ def main(_):
         )
         return action_loss, action_metrics
 
-    @jax.jit
+    # Data parallelism
+    # Model is replicated across devices, data is split across devices
+    @partial(
+        jax.jit,
+        in_shardings=[replicated_sharding, dp_sharding],
+    )
     def train_step(state, batch):
         rng, dropout_rng = jax.random.split(state.rng)
         (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(
@@ -182,10 +209,10 @@ def main(_):
 
     # run finetuning loop
     logging.info("Starting finetuning...")
-    for i in tqdm.tqdm(range(5000), total=5000, dynamic_ncols=True):
+    for i in tqdm.tqdm(range(2e6), total=2e6, dynamic_ncols=True):
         batch = next(train_data_iter)
         train_state, update_info = train_step(train_state, batch)
-        if (i + 1) % 100 == 0:
+        if (i + 1) % 1000 == 0:
             update_info = jax.device_get(update_info)
             wandb.log(
                 flax.traverse_util.flatten_dict({"training": update_info}, sep="/"),

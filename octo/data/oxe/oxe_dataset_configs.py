@@ -119,7 +119,7 @@ OXE_DATASET_CONFIGS = {
         "image_obs_keys": {
             "primary": "image",
             "secondary": None,
-            "wrist": "hand_image",
+            "wrist": None,
         },
         "depth_obs_keys": {"primary": "depth", "secondary": None, "wrist": None},
         "proprio_encoding": ProprioEncoding.POS_QUAT,

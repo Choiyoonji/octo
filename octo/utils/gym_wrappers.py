@@ -297,6 +297,7 @@ class NormalizeProprio(gym.ObservationWrapper):
         )
 
     def observation(self, obs):
+        print(obs["proprio"])
         if "proprio" in self.action_proprio_metadata:
             obs["proprio"] = self.normalize(
                 obs["proprio"], self.action_proprio_metadata["proprio"]

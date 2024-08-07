@@ -91,7 +91,7 @@ class AlohaGymEnv(gym.Env):
 
     def get_task(self):
         return {
-            "language_instruction": ["pick up the cube and hand it over"],
+            "language_instruction": ["pick up the cube, shake it, and hand it over"],
         }
 
     def get_episode_metrics(self):
